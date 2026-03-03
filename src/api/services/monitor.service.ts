@@ -141,6 +141,16 @@ export class WAMonitoringService {
       return instance;
     });
 
+    // Sort instances by connection status: open > connecting > close
+    const statusOrder: Record<string, number> = { open: 0, connecting: 1, close: 2 };
+    enrichedInstances.sort((a, b) => {
+      const orderA = statusOrder[a.connectionStatus] ?? 3;
+      const orderB = statusOrder[b.connectionStatus] ?? 3;
+      if (orderA !== orderB) return orderA - orderB;
+      // Secondary sort by name for stable ordering within same status
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
     return enrichedInstances;
   }
 
