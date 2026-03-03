@@ -126,7 +126,22 @@ export class WAMonitoringService {
       },
     });
 
-    return instances;
+    // Enrich DB connection status with real-time in-memory state
+    const enrichedInstances = instances.map((instance) => {
+      const waInstance = this.waInstances[instance.name];
+      if (waInstance) {
+        const realState = waInstance.connectionStatus?.state;
+        if (realState && realState !== instance.connectionStatus) {
+          this.logger.warn(
+            `Instance "${instance.name}" DB status="${instance.connectionStatus}" but real status="${realState}", using real status`,
+          );
+          return { ...instance, connectionStatus: realState };
+        }
+      }
+      return instance;
+    });
+
+    return enrichedInstances;
   }
 
   public async instanceInfoById(instanceId?: string, number?: string) {
@@ -434,6 +449,17 @@ export class WAMonitoringService {
 
         this.waInstances[instanceName].instance.qrcode = { count: 0 };
         this.waInstances[instanceName].stateConnection.state = 'close';
+
+        // Update DB to reflect the real disconnected state
+        const instance = await this.prismaRepository.instance.findFirst({
+          where: { name: instanceName },
+        });
+        if (instance) {
+          await this.prismaRepository.instance.update({
+            where: { name: instanceName },
+            data: { connectionStatus: 'close' },
+          });
+        }
       } catch (error) {
         this.logger.error({
           localError: 'noConnection',

@@ -249,6 +249,8 @@ export class BaileysStartupService extends ChannelStartupService {
   private isDeleting = false; // Flag to prevent reconnection during deletion
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
+  private reconnectAttempts = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 5;
 
   // Cache TTL constants (in seconds)
   private readonly MESSAGE_CACHE_TTL_SECONDS = 5 * 60; // 5 minutes - avoid duplicate message processing
@@ -259,6 +261,26 @@ export class BaileysStartupService extends ChannelStartupService {
   public phoneNumber: string;
 
   public get connectionStatus() {
+    // Validate actual WebSocket state against in-memory state
+    if (this.stateConnection.state === 'open' && this.client) {
+      const ws = this.client?.ws;
+      // Check if WebSocket is actually closed/closing using Baileys' ws properties
+      if (ws && (ws as any).isClosed || (ws as any).isClosing) {
+        this.logger.warn({
+          message: 'Connection state mismatch detected',
+          memoryState: this.stateConnection.state,
+          instanceName: this.instance.name,
+        });
+        this.stateConnection.state = 'close';
+        // Update DB asynchronously to reflect real state
+        this.prismaRepository.instance
+          .update({
+            where: { id: this.instanceId },
+            data: { connectionStatus: 'close' },
+          })
+          .catch((err) => this.logger.error('Failed to update connection status in DB: ' + err));
+      }
+    }
     return this.stateConnection;
   }
 
@@ -469,11 +491,50 @@ export class BaileysStartupService extends ChannelStartupService {
       });
 
       if (shouldReconnect) {
-        // Add 3 second delay before reconnection to prevent rapid reconnection loops
-        this.logger.info('Reconnecting in 3 seconds...');
+        this.reconnectAttempts++;
+
+        if (this.reconnectAttempts > this.MAX_RECONNECT_ATTEMPTS) {
+          this.logger.warn({
+            message: 'Max reconnection attempts reached, giving up',
+            attempts: this.reconnectAttempts,
+            instanceName: this.instance.name,
+          });
+
+          await this.prismaRepository.instance.update({
+            where: { id: this.instanceId },
+            data: {
+              connectionStatus: 'close',
+              disconnectionAt: new Date(),
+              disconnectionReasonCode: statusCode,
+              disconnectionObject: JSON.stringify(lastDisconnect),
+            },
+          });
+
+          this.reconnectAttempts = 0;
+
+          this.sendDataWebhook(Events.CONNECTION_UPDATE, {
+            instance: this.instance.name,
+            state: 'close',
+            statusReason: DisconnectReason.connectionLost,
+          });
+          return;
+        }
+
+        // Update DB to 'connecting' so the status is accurate during reconnection
+        await this.prismaRepository.instance.update({
+          where: { id: this.instanceId },
+          data: { connectionStatus: 'connecting' },
+        });
+
+        const delay = Math.min(3000 * this.reconnectAttempts, 15000); // Exponential backoff: 3s, 6s, 9s, 12s, 15s
+        this.logger.info(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})...`);
         setTimeout(async () => {
-          await this.connectToWhatsapp(this.phoneNumber);
-        }, 3000);
+          try {
+            await this.connectToWhatsapp(this.phoneNumber);
+          } catch (err) {
+            this.logger.error({ message: 'Reconnection attempt failed', error: err, attempt: this.reconnectAttempts });
+          }
+        }, delay);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
           instance: this.instance.name,
@@ -510,6 +571,9 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     if (connection === 'open') {
+      // Reset reconnection counter on successful connection
+      this.reconnectAttempts = 0;
+
       this.instance.wuid = this.client.user.id.replace(/:\d+/, '');
       try {
         const profilePic = await this.profilePicture(this.instance.wuid);
