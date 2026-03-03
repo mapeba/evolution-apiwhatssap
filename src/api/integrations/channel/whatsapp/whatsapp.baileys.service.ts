@@ -250,7 +250,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
   private reconnectAttempts = 0;
-  private readonly MAX_RECONNECT_ATTEMPTS = 5;
+  private readonly MAX_RECONNECT_ATTEMPTS = 10;
 
   // Cache TTL constants (in seconds)
   private readonly MESSAGE_CACHE_TTL_SECONDS = 5 * 60; // 5 minutes - avoid duplicate message processing
@@ -265,7 +265,8 @@ export class BaileysStartupService extends ChannelStartupService {
     if (this.stateConnection.state === 'open' && this.client) {
       const ws = this.client?.ws;
       // Check if WebSocket is actually closed/closing using Baileys' ws properties
-      if (ws && (ws as any).isClosed || (ws as any).isClosing) {
+      // Fix: wrap conditions in parentheses to avoid operator precedence bug
+      if ((ws && ((ws as any).isClosed || (ws as any).isClosing))) {
         this.logger.warn({
           message: 'Connection state mismatch detected',
           memoryState: this.stateConnection.state,
@@ -480,14 +481,19 @@ export class BaileysStartupService extends ChannelStartupService {
       }
 
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const errorMessage = (lastDisconnect?.error as Boom)?.message || 'Unknown error';
+      const errorPayload = (lastDisconnect?.error as Boom)?.output?.payload;
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
 
       this.logger.info({
         message: 'Connection closed, evaluating reconnection',
         statusCode,
+        errorMessage,
+        errorPayload: JSON.stringify(errorPayload),
         shouldReconnect,
         instanceName: this.instance.name,
+        reconnectAttempts: this.reconnectAttempts,
       });
 
       if (shouldReconnect) {
@@ -526,7 +532,10 @@ export class BaileysStartupService extends ChannelStartupService {
           data: { connectionStatus: 'connecting' },
         });
 
-        const delay = Math.min(3000 * this.reconnectAttempts, 15000); // Exponential backoff: 3s, 6s, 9s, 12s, 15s
+        // Exponential backoff with jitter: base 2s, max 30s
+        const baseDelay = Math.min(2000 * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
+        const jitter = Math.random() * 1000;
+        const delay = Math.round(baseDelay + jitter);
         this.logger.info(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})...`);
         setTimeout(async () => {
           try {
@@ -753,8 +762,8 @@ export class BaileysStartupService extends ChannelStartupService {
       retryRequestDelayMs: 350,
       maxMsgRetryCount: 4,
       fireInitQueries: true,
-      connectTimeoutMs: 30_000,
-      keepAliveIntervalMs: 30_000,
+      connectTimeoutMs: 60_000,
+      keepAliveIntervalMs: 25_000,
       qrTimeout: 45_000,
       emitOwnEvents: false,
       shouldIgnoreJid: (jid) => {

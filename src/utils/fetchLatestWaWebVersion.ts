@@ -22,7 +22,8 @@ export const fetchLatestWaWebVersion = async (options: AxiosRequestConfig<{}>) =
   try {
     const { data } = await axios.get('https://web.whatsapp.com/sw.js', {
       ...options,
-      responseType: 'json',
+      responseType: 'text',
+      timeout: 10000,
     });
 
     const regex = /\\?"client_revision\\?":\s*(\d+)/;
