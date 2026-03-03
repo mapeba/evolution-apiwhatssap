@@ -14,7 +14,7 @@ export class ViewsRouter extends RouterBroker {
 
     this.router.use(express.static(basePath));
 
-    this.router.get('*', (req, res) => {
+    this.router.get('*path', (req, res) => {
       res.sendFile(indexPath);
     });
   }
