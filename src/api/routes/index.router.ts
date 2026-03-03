@@ -162,8 +162,8 @@ if (metricsConfig.ENABLED) {
 
 if (!serverConfig.DISABLE_MANAGER) router.use('/manager', new ViewsRouter().router);
 
-router.get('/assets/*', (req, res) => {
-  const fileName = req.params[0];
+router.get('/assets/*path', (req, res) => {
+  const fileName = req.params['path'] as string;
 
   // Security: Reject paths containing traversal patterns
   if (!fileName || fileName.includes('..') || fileName.includes('\\') || path.isAbsolute(fileName)) {
