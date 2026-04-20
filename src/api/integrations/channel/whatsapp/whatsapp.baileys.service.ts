@@ -494,15 +494,6 @@ export class BaileysStartupService extends ChannelStartupService {
       const errorPayload = (lastDisconnect?.error as Boom)?.output?.payload;
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
 
-      // FIX: Do not reconnect if it's the initial connection (waiting for QR code)
-      // This prevents infinite loop that blocks QR code generation
-      const isInitialConnection = !this.instance.wuid && (this.instance.qrcode?.count ?? 0) === 0;
-
-      if (isInitialConnection) {
-        this.logger.info('Initial connection closed, waiting for QR code generation...');
-        return;
-      }
-
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
 
       this.logger.info({
