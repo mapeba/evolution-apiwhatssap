@@ -53,7 +53,8 @@ export class EvolutionBotRouter extends RouterBroker {
           request: req,
           schema: evolutionBotSchema,
           ClassRef: EvolutionBotDto,
-          execute: (instance, data) => evolutionBotController.updateBot(instance, req.params.evolutionBotId as string, data),
+          execute: (instance, data) =>
+            evolutionBotController.updateBot(instance, req.params.evolutionBotId as string, data),
         });
 
         res.status(HttpStatus.OK).json(response);

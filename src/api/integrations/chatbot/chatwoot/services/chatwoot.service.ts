@@ -641,16 +641,16 @@ export class ChatwootService {
     const isLid = body.key.addressingMode === 'lid';
     const isGroup = body.key.remoteJid.endsWith('@g.us');
     let phoneNumber = isLid && !isGroup ? body.key.remoteJidAlt : body.key.remoteJid;
-    let { remoteJid } = body.key;
+    const { remoteJid } = body.key;
 
     // CORREÇÃO LID: Resolve LID para número normal antes de processar
     if (isLid && !isGroup) {
       const resolvedPhone = await this.resolveLidToPhone(instance, body.key);
-      
+
       if (resolvedPhone && resolvedPhone !== remoteJid) {
         this.logger.verbose(`LID detected and resolved: ${remoteJid} → ${resolvedPhone}`);
         phoneNumber = resolvedPhone;
-        
+
         // Salva mapeamento se temos remoteJidAlt
         if (body.key.remoteJidAlt) {
           this.saveLidMapping(remoteJid, body.key.remoteJidAlt);
@@ -974,9 +974,7 @@ export class ChatwootService {
     const sourceReplyId = quotedMsg?.chatwootMessageId || null;
 
     // Filtra valores null/undefined do content_attributes para evitar erro 406
-    const filteredReplyToIds = Object.fromEntries(
-      Object.entries(replyToIds).filter(([_, value]) => value != null)
-    );
+    const filteredReplyToIds = Object.fromEntries(Object.entries(replyToIds).filter(([, value]) => value != null));
 
     // Monta o objeto data, incluindo content_attributes apenas se houver dados válidos
     const messageData: any = {
@@ -1132,9 +1130,7 @@ export class ChatwootService {
       const replyToIds = await this.getReplyToIds(messageBody, instance);
 
       // Filtra valores null/undefined antes de enviar
-      const filteredReplyToIds = Object.fromEntries(
-        Object.entries(replyToIds).filter(([_, value]) => value != null)
-      );
+      const filteredReplyToIds = Object.fromEntries(Object.entries(replyToIds).filter(([, value]) => value != null));
 
       if (Object.keys(filteredReplyToIds).length > 0) {
         const contentAttrs = JSON.stringify(filteredReplyToIds);
@@ -1841,32 +1837,32 @@ export class ChatwootService {
   }
 
   private getTypeMessage(msg: any) {
-  const types = {
-    conversation: msg.conversation,
-    imageMessage: msg.imageMessage?.caption,
-    videoMessage: msg.videoMessage?.caption,
-    extendedTextMessage: msg.extendedTextMessage?.text,
-    messageContextInfo: msg.messageContextInfo?.stanzaId,
-    stickerMessage: undefined,
-    documentMessage: msg.documentMessage?.caption,
-    documentWithCaptionMessage: msg.documentWithCaptionMessage?.message?.documentMessage?.caption,
-    audioMessage: msg.audioMessage ? (msg.audioMessage.caption ?? '') : undefined,
-    contactMessage: msg.contactMessage?.vcard,
-    contactsArrayMessage: msg.contactsArrayMessage,
-    locationMessage: msg.locationMessage,
-    liveLocationMessage: msg.liveLocationMessage,
-    listMessage: msg.listMessage,
-    listResponseMessage: msg.listResponseMessage,
-    orderMessage: msg.orderMessage,
-    quotedProductMessage: msg.contextInfo?.quotedMessage?.productMessage,
-    viewOnceMessageV2:
-      msg?.message?.viewOnceMessageV2?.message?.imageMessage?.url ||
-      msg?.message?.viewOnceMessageV2?.message?.videoMessage?.url ||
-      msg?.message?.viewOnceMessageV2?.message?.audioMessage?.url,
-  };
+    const types = {
+      conversation: msg.conversation,
+      imageMessage: msg.imageMessage?.caption,
+      videoMessage: msg.videoMessage?.caption,
+      extendedTextMessage: msg.extendedTextMessage?.text,
+      messageContextInfo: msg.messageContextInfo?.stanzaId,
+      stickerMessage: undefined,
+      documentMessage: msg.documentMessage?.caption,
+      documentWithCaptionMessage: msg.documentWithCaptionMessage?.message?.documentMessage?.caption,
+      audioMessage: msg.audioMessage ? (msg.audioMessage.caption ?? '') : undefined,
+      contactMessage: msg.contactMessage?.vcard,
+      contactsArrayMessage: msg.contactsArrayMessage,
+      locationMessage: msg.locationMessage,
+      liveLocationMessage: msg.liveLocationMessage,
+      listMessage: msg.listMessage,
+      listResponseMessage: msg.listResponseMessage,
+      orderMessage: msg.orderMessage,
+      quotedProductMessage: msg.contextInfo?.quotedMessage?.productMessage,
+      viewOnceMessageV2:
+        msg?.message?.viewOnceMessageV2?.message?.imageMessage?.url ||
+        msg?.message?.viewOnceMessageV2?.message?.videoMessage?.url ||
+        msg?.message?.viewOnceMessageV2?.message?.audioMessage?.url,
+    };
 
-  return types;
-}
+    return types;
+  }
 
   private getMessageContent(types: any) {
     const typeKey = Object.keys(types).find((key) => types[key] !== undefined);
@@ -1894,39 +1890,39 @@ export class ChatwootService {
       this.processedOrderIds.set(result.orderId, now);
     }
     // Tratamento de Produto citado (WhatsApp Desktop)
-if (typeKey === 'quotedProductMessage' && result?.product) {
-  const product = result.product;
-  
-  // Extrai preço
-  let rawPrice = 0;
-  const amount = product.priceAmount1000;
+    if (typeKey === 'quotedProductMessage' && result?.product) {
+      const product = result.product;
 
-  if (Long.isLong(amount)) {
-    rawPrice = amount.toNumber();
-  } else if (amount && typeof amount === 'object' && 'low' in amount) {
-    rawPrice = Long.fromValue(amount).toNumber();
-  } else if (typeof amount === 'number') {
-    rawPrice = amount;
-  }
+      // Extrai preço
+      let rawPrice = 0;
+      const amount = product.priceAmount1000;
 
-  const price = (rawPrice / 1000).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: product.currencyCode || 'BRL',
-  });
+      if (Long.isLong(amount)) {
+        rawPrice = amount.toNumber();
+      } else if (amount && typeof amount === 'object' && 'low' in amount) {
+        rawPrice = Long.fromValue(amount).toNumber();
+      } else if (typeof amount === 'number') {
+        rawPrice = amount;
+      }
 
-  const productTitle = product.title || 'Produto do catálogo';
-  const productId = product.productId || 'N/A';
+      const price = (rawPrice / 1000).toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: product.currencyCode || 'BRL',
+      });
 
-  return (
-    `🛒 *PRODUTO DO CATÁLOGO (Desktop)*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📦 *Produto:* ${productTitle}\n` +
-    `💰 *Preço:* ${price}\n` +
-    `🆔 *Código:* ${productId}\n` +
-    `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `_Cliente perguntou: "${types.conversation || 'Me envia este produto?'}"_`
-  );
-}
+      const productTitle = product.title || 'Produto do catálogo';
+      const productId = product.productId || 'N/A';
+
+      return (
+        `🛒 *PRODUTO DO CATÁLOGO (Desktop)*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📦 *Produto:* ${productTitle}\n` +
+        `💰 *Preço:* ${price}\n` +
+        `🆔 *Código:* ${productId}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `_Cliente perguntou: "${types.conversation || 'Me envia este produto?'}"_`
+      );
+    }
     if (typeKey === 'orderMessage') {
       // Extrai o valor - pode ser Long, objeto {low, high}, ou número direto
       let rawPrice = 0;
@@ -2166,11 +2162,11 @@ if (typeKey === 'quotedProductMessage' && result?.product) {
       if (body?.key?.remoteJid && body.key.remoteJid.includes('@lid') && !body.key.remoteJid.endsWith('@g.us')) {
         const originalJid = body.key.remoteJid;
         const resolvedPhone = await this.resolveLidToPhone(instance, body.key);
-        
+
         if (resolvedPhone && resolvedPhone !== originalJid) {
           this.logger.verbose(`Event LID resolved: ${originalJid} → ${resolvedPhone}`);
           body.key.remoteJid = resolvedPhone;
-          
+
           // Salva mapeamento se temos remoteJidAlt
           if (body.key.remoteJidAlt) {
             this.saveLidMapping(originalJid, body.key.remoteJidAlt);
@@ -2748,13 +2744,13 @@ if (typeKey === 'quotedProductMessage' && result?.product) {
     if (!lid || !phoneNumber || !lid.includes('@lid')) {
       return;
     }
-    
+
     this.cleanLidCache();
     this.lidToPhoneMap.set(lid, {
       phone: phoneNumber,
       timestamp: Date.now(),
     });
-    
+
     this.logger.verbose(`LID mapping saved: ${lid} → ${phoneNumber}`);
   }
 
@@ -2764,7 +2760,7 @@ if (typeKey === 'quotedProductMessage' && result?.product) {
    */
   private async resolveLidToPhone(instance: InstanceDto, messageKey: any): Promise<string | null> {
     const { remoteJid, remoteJidAlt } = messageKey;
-    
+
     // Se não for LID, retorna o próprio remoteJid
     if (!remoteJid || !remoteJid.includes('@lid')) {
       return remoteJid;
@@ -2788,7 +2784,7 @@ if (typeKey === 'quotedProductMessage' && result?.product) {
     try {
       const lidIdentifier = this.normalizeJidIdentifier(remoteJid);
       const contact = await this.findContactByIdentifier(instance, lidIdentifier);
-      
+
       if (contact && contact.phone_number) {
         // Converte +554498860240 → 554498860240@s.whatsapp.net
         const phoneNumber = contact.phone_number.replace('+', '') + '@s.whatsapp.net';
