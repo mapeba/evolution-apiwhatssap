@@ -1,4 +1,6 @@
 {
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
   "editor.fontSize": 13,
   "editor.fontLigatures": true,
   "editor.letterSpacing": 0.5,
