@@ -91,6 +91,7 @@ export type EventsRabbitmq = {
   CALL: boolean;
   TYPEBOT_START: boolean;
   TYPEBOT_CHANGE_STATUS: boolean;
+  MESSAGING_HISTORY_SET: boolean;
 };
 
 export type Rabbitmq = {
@@ -121,6 +122,7 @@ export type Sqs = {
   SECRET_ACCESS_KEY: string;
   ACCOUNT_ID: string;
   REGION: string;
+  BASE_URL: string;
   MAX_PAYLOAD_SIZE: number;
   EVENTS: {
     APPLICATION_STARTUP: boolean;
@@ -150,6 +152,7 @@ export type Sqs = {
     SEND_MESSAGE: boolean;
     TYPEBOT_CHANGE_STATUS: boolean;
     TYPEBOT_START: boolean;
+    MESSAGING_HISTORY_SET: boolean;
   };
 };
 
@@ -223,6 +226,7 @@ export type EventsWebhook = {
   CALL: boolean;
   TYPEBOT_START: boolean;
   TYPEBOT_CHANGE_STATUS: boolean;
+  MESSAGING_HISTORY_SET: boolean;
   ERRORS: boolean;
   ERRORS_WEBHOOK: string;
 };
@@ -256,6 +260,7 @@ export type EventsPusher = {
   CALL: boolean;
   TYPEBOT_START: boolean;
   TYPEBOT_CHANGE_STATUS: boolean;
+  MESSAGING_HISTORY_SET: boolean;
 };
 
 export type ApiKey = { KEY: string };
@@ -539,6 +544,7 @@ export class ConfigService {
           CALL: process.env?.RABBITMQ_EVENTS_CALL === 'true',
           TYPEBOT_START: process.env?.RABBITMQ_EVENTS_TYPEBOT_START === 'true',
           TYPEBOT_CHANGE_STATUS: process.env?.RABBITMQ_EVENTS_TYPEBOT_CHANGE_STATUS === 'true',
+          MESSAGING_HISTORY_SET: process.env?.RABBITMQ_EVENTS_MESSAGING_HISTORY_SET === 'true',
         },
       },
       NATS: {
@@ -576,6 +582,7 @@ export class ConfigService {
           CALL: process.env?.NATS_EVENTS_CALL === 'true',
           TYPEBOT_START: process.env?.NATS_EVENTS_TYPEBOT_START === 'true',
           TYPEBOT_CHANGE_STATUS: process.env?.NATS_EVENTS_TYPEBOT_CHANGE_STATUS === 'true',
+          MESSAGING_HISTORY_SET: process.env?.NATS_EVENTS_MESSAGING_HISTORY_SET === 'true',
         },
       },
       SQS: {
@@ -587,6 +594,7 @@ export class ConfigService {
         SECRET_ACCESS_KEY: process.env.SQS_SECRET_ACCESS_KEY || '',
         ACCOUNT_ID: process.env.SQS_ACCOUNT_ID || '',
         REGION: process.env.SQS_REGION || '',
+        BASE_URL: process.env.SQS_BASE_URL || '',
         MAX_PAYLOAD_SIZE: Number.parseInt(process.env.SQS_MAX_PAYLOAD_SIZE ?? '1048576'),
         EVENTS: {
           APPLICATION_STARTUP: process.env?.SQS_GLOBAL_APPLICATION_STARTUP === 'true',
@@ -616,6 +624,7 @@ export class ConfigService {
           SEND_MESSAGE: process.env?.SQS_GLOBAL_SEND_MESSAGE === 'true',
           TYPEBOT_CHANGE_STATUS: process.env?.SQS_GLOBAL_TYPEBOT_CHANGE_STATUS === 'true',
           TYPEBOT_START: process.env?.SQS_GLOBAL_TYPEBOT_START === 'true',
+          MESSAGING_HISTORY_SET: process.env?.SQS_GLOBAL_MESSAGING_HISTORY_SET === 'true',
         },
       },
       KAFKA: {
@@ -659,6 +668,7 @@ export class ConfigService {
           CALL: process.env?.KAFKA_EVENTS_CALL === 'true',
           TYPEBOT_START: process.env?.KAFKA_EVENTS_TYPEBOT_START === 'true',
           TYPEBOT_CHANGE_STATUS: process.env?.KAFKA_EVENTS_TYPEBOT_CHANGE_STATUS === 'true',
+          MESSAGING_HISTORY_SET: process.env?.KAFKA_EVENTS_MESSAGING_HISTORY_SET === 'true',
         },
         SASL:
           process.env?.KAFKA_SASL_ENABLED === 'true'
@@ -724,6 +734,7 @@ export class ConfigService {
           CALL: process.env?.PUSHER_EVENTS_CALL === 'true',
           TYPEBOT_START: process.env?.PUSHER_EVENTS_TYPEBOT_START === 'true',
           TYPEBOT_CHANGE_STATUS: process.env?.PUSHER_EVENTS_TYPEBOT_CHANGE_STATUS === 'true',
+          MESSAGING_HISTORY_SET: process.env?.PUSHER_EVENTS_MESSAGING_HISTORY_SET === 'true',
         },
       },
       WA_BUSINESS: {
@@ -781,6 +792,7 @@ export class ConfigService {
           CALL: process.env?.WEBHOOK_EVENTS_CALL === 'true',
           TYPEBOT_START: process.env?.WEBHOOK_EVENTS_TYPEBOT_START === 'true',
           TYPEBOT_CHANGE_STATUS: process.env?.WEBHOOK_EVENTS_TYPEBOT_CHANGE_STATUS === 'true',
+          MESSAGING_HISTORY_SET: process.env?.WEBHOOK_EVENTS_MESSAGING_HISTORY_SET === 'true',
           ERRORS: process.env?.WEBHOOK_EVENTS_ERRORS === 'true',
           ERRORS_WEBHOOK: process.env?.WEBHOOK_EVENTS_ERRORS_WEBHOOK || '',
         },

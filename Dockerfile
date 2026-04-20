@@ -12,8 +12,11 @@ WORKDIR /evolution
 COPY ./package*.json ./
 COPY ./tsconfig.json ./
 COPY ./tsup.config.ts ./
+COPY ./patches ./patches
 
 RUN npm ci --silent
+
+RUN npx patch-package
 
 COPY ./src ./src
 COPY ./public ./public
@@ -28,7 +31,7 @@ RUN chmod +x ./Docker/scripts/* && dos2unix ./Docker/scripts/*
 
 RUN ./Docker/scripts/generate_database.sh
 
-RUN npm run build
+RUN NODE_OPTIONS="--max-old-space-size=2048" npm run build
 
 FROM node:24-alpine AS final
 
