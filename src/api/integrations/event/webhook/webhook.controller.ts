@@ -113,13 +113,13 @@ export class WebhookController extends EventController implements EventControlle
         }
 
         if (enabledLog) {
-          const logData = {
+          this.logger.log({
             local: `${origin}.sendData-Webhook`,
             url: baseURL,
-            ...webhookData,
-          };
-
-          this.logger.log(logData);
+            event,
+            instance: instanceName,
+            date_time: dateTime,
+          });
         }
 
         try {
@@ -169,13 +169,13 @@ export class WebhookController extends EventController implements EventControlle
         }
 
         if (enabledLog) {
-          const logData = {
+          this.logger.log({
             local: `${origin}.sendData-Webhook-Global`,
             url: globalURL,
-            ...webhookData,
-          };
-
-          this.logger.log(logData);
+            event,
+            instance: instanceName,
+            date_time: dateTime,
+          });
         }
 
         try {

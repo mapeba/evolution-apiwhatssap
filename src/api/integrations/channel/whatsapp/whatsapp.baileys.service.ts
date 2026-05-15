@@ -251,6 +251,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private endSession = false;
   private isDeleting = false; // Flag to prevent reconnection during deletion
   private reconnectTimer: NodeJS.Timeout | null = null; // Store timer ref to cancel on logout/disconnect
+  private evProcessCleanup: (() => void) | null = null; // Cleanup fn from ev.process() to stop stale listeners
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
   private reconnectAttempts = 0;
@@ -304,8 +305,12 @@ export class BaileysStartupService extends ChannelStartupService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    // Set endSession=true so the close event fired by client.end() does NOT schedule
-    // another reconnect. createClient() will reset it to false (since isDeleting=false).
+    // Stop ev.process() listener so the close event from client.end() below
+    // is NOT processed and does NOT schedule another reconnect.
+    if (this.evProcessCleanup) {
+      this.evProcessCleanup();
+      this.evProcessCleanup = null;
+    }
     this.endSession = true;
     this.isDeleting = false;
     this.reconnectAttempts = 0;
@@ -327,6 +332,12 @@ export class BaileysStartupService extends ChannelStartupService {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+
+    // Stop ev.process() listener before closing socket to prevent stale events
+    if (this.evProcessCleanup) {
+      this.evProcessCleanup();
+      this.evProcessCleanup = null;
     }
 
     this.messageProcessor.onDestroy();
@@ -943,6 +954,12 @@ export class BaileysStartupService extends ChannelStartupService {
     // Close previous client cleanly before creating a new one to avoid
     // accumulating parallel Baileys instances with active event handlers.
     if (this.client) {
+      // Stop the old ev.process() listener FIRST so its close event doesn't
+      // schedule spurious reconnects after endSession is reset below.
+      if (this.evProcessCleanup) {
+        this.evProcessCleanup();
+        this.evProcessCleanup = null;
+      }
       try {
         this.client.ws?.close();
         this.client.end(new Error('Replaced by new connection'));
@@ -965,13 +982,11 @@ export class BaileysStartupService extends ChannelStartupService {
     this.eventHandler();
 
     this.client.ws.on('CB:call', (packet) => {
-      console.log('CB:call', packet);
       const payload = { event: 'CB:call', packet: packet };
       this.sendDataWebhook(Events.CALL, payload, true, ['websocket']);
     });
 
     this.client.ws.on('CB:ack,class:call', (packet) => {
-      console.log('CB:ack,class:call', packet);
       const payload = { event: 'CB:ack,class:call', packet: packet };
       this.sendDataWebhook(Events.CALL, payload, true, ['websocket']);
     });
@@ -1210,9 +1225,9 @@ export class BaileysStartupService extends ChannelStartupService {
         this.historySyncLastProgress = progress ?? -1;
 
         if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
-          console.log('received on-demand history sync, messages=', messages);
+          this.logger.debug(`received on-demand history sync, messages=${messages?.length ?? 0}`);
         }
-        console.log(
+        this.logger.debug(
           `recv ${chats.length} chats, ${contacts.length} contacts, ${messages.length} msgs (is latest: ${isLatest}, progress: ${progress}%), type: ${syncType}`,
         );
 
@@ -1438,14 +1453,14 @@ export class BaileysStartupService extends ChannelStartupService {
             if (text == 'requestPlaceholder' && !requestId) {
               const messageId = await this.client.requestPlaceholderResend(received.key);
 
-              console.log('requested placeholder resync, id=', messageId);
+              this.logger.debug(`requested placeholder resync, id=${messageId}`);
             } else if (requestId) {
-              console.log('Message received from phone, id=', requestId, received);
+              this.logger.debug(`Message received from phone, id=${requestId}`);
             }
 
             if (text == 'onDemandHistSync') {
               const messageId = await this.client.fetchMessageHistory(50, received.key, received.messageTimestamp!);
-              console.log('requested on-demand sync, id=', messageId);
+              this.logger.debug(`requested on-demand sync, id=${messageId}`);
             }
           }
 
@@ -1526,7 +1541,7 @@ export class BaileysStartupService extends ChannelStartupService {
                   data: { name: received.pushName },
                 });
               } catch {
-                console.log(`Chat insert record ignored: ${received.key.remoteJid} - ${this.instanceId}`);
+                this.logger.debug(`Chat insert record ignored: ${received.key.remoteJid} - ${this.instanceId}`);
               }
             }
           }
@@ -1815,8 +1830,6 @@ export class BaileysStartupService extends ChannelStartupService {
 
             messageRaw.key.addressingMode = 'pn';
           }
-          console.log(messageRaw);
-
           this.sendDataWebhook(Events.MESSAGES_UPSERT, messageRaw);
 
           await chatbotController.emit({
@@ -1920,7 +1933,6 @@ export class BaileysStartupService extends ChannelStartupService {
         const cached = await this.baileysCache.get(updateKey);
 
         const secondsSinceEpoch = Math.floor(Date.now() / 1000);
-        console.log('CACHE:', { cached, updateKey, messageTimestamp: update.messageTimestamp, secondsSinceEpoch });
 
         if (
           (update.messageTimestamp && update.messageTimestamp === cached) ||
@@ -2095,7 +2107,7 @@ export class BaileysStartupService extends ChannelStartupService {
               try {
                 await this.prismaRepository.chat.update({ where: { id: existingChat.id }, data: chatToInsert });
               } catch {
-                console.log(`Chat insert record ignored: ${chatToInsert.remoteJid} - ${chatToInsert.instanceId}`);
+                this.logger.debug(`Chat insert record ignored: ${chatToInsert.remoteJid} - ${chatToInsert.instanceId}`);
               }
             }
           }
@@ -2249,7 +2261,7 @@ export class BaileysStartupService extends ChannelStartupService {
   };
 
   private eventHandler() {
-    this.client.ev.process(async (events) => {
+    this.evProcessCleanup = this.client.ev.process(async (events) => {
       this.eventProcessingQueue = this.eventProcessingQueue.then(async () => {
         try {
           if (!this.endSession) {
@@ -4854,7 +4866,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
     if ((cacheConf?.REDIS?.ENABLED && cacheConf?.REDIS?.URI !== '') || cacheConf?.LOCAL?.ENABLED) {
       if (await groupMetadataCache?.has(groupJid)) {
-        console.log(`Cache request for group: ${groupJid}`);
+        this.logger.debug(`Cache request for group: ${groupJid}`);
         const meta = await groupMetadataCache.get(groupJid);
 
         if (Date.now() - meta.timestamp > 3600000) {
@@ -4864,7 +4876,7 @@ export class BaileysStartupService extends ChannelStartupService {
         return meta.data;
       }
 
-      console.log(`Cache request for group: ${groupJid} - not found`);
+      this.logger.debug(`Cache request for group: ${groupJid} - not found`);
       return await this.updateGroupMetadataCache(groupJid);
     }
 
@@ -5489,7 +5501,6 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async baileysSendNode(stanza: any) {
-    console.log('stanza', JSON.stringify(stanza));
     const response = await this.client.sendNode(stanza);
 
     return response;
