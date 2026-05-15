@@ -250,6 +250,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private readonly userDevicesCache: CacheStore = new NodeCache({ stdTTL: 300000, useClones: false });
   private endSession = false;
   private isDeleting = false; // Flag to prevent reconnection during deletion
+  private reconnectTimer: NodeJS.Timeout | null = null; // Store timer ref to cancel on logout/disconnect
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
   private reconnectAttempts = 0;
@@ -294,10 +295,37 @@ export class BaileysStartupService extends ChannelStartupService {
     return this.stateConnection;
   }
 
+  /**
+   * Cancels any pending reconnect timer and resets connection flags without deleting the instance.
+   * Used to force a clean reconnection attempt (e.g., from the restart button).
+   */
+  public cancelReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.endSession = false;
+    this.isDeleting = false;
+    this.reconnectAttempts = 0;
+
+    try {
+      this.client?.ws?.close();
+      this.client?.end(new Error('Force restart'));
+    } catch {
+      // Ignore errors during force-close
+    }
+  }
+
   public async logoutInstance() {
     // Mark instance as deleting to prevent reconnection attempts
     this.isDeleting = true;
     this.endSession = true;
+
+    // Cancel any pending reconnect timer immediately
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
 
     this.messageProcessor.onDestroy();
 
@@ -549,7 +577,16 @@ export class BaileysStartupService extends ChannelStartupService {
         this.logger.info(
           `Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS})...`,
         );
-        setTimeout(async () => {
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        this.reconnectTimer = setTimeout(async () => {
+          this.reconnectTimer = null;
+          if (this.isDeleting || this.endSession) {
+            this.logger.info('Reconnect timer fired but instance is being deleted/ended, aborting reconnection');
+            return;
+          }
           try {
             await this.connectToWhatsapp(this.phoneNumber);
           } catch (err) {
@@ -836,7 +873,10 @@ export class BaileysStartupService extends ChannelStartupService {
       },
     };
 
-    this.endSession = false;
+    // Only reset endSession if not being deleted
+    if (!this.isDeleting) {
+      this.endSession = false;
+    }
 
     this.client = makeWASocket(socketConfig);
 

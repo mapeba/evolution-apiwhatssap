@@ -320,6 +320,12 @@ export class InstanceController {
       }
 
       if (state == 'connecting') {
+        // Force cancel pending reconnect so we can start fresh
+        if (typeof instance.cancelReconnect === 'function') {
+          instance.cancelReconnect();
+        }
+        await instance.connectToWhatsapp(number);
+        await delay(2000);
         return instance.qrCode;
       }
 
@@ -373,8 +379,13 @@ export class InstanceController {
       if (state === 'open' || state === 'connecting') {
         if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) instance.clearCacheChatwoot();
 
-        instance.client?.ws?.close();
-        instance.client?.end(new Error('restart'));
+        // Cancel any pending reconnect timer and reset flags before forcing reconnect
+        if (typeof instance.cancelReconnect === 'function') {
+          instance.cancelReconnect();
+        } else {
+          instance.client?.ws?.close();
+          instance.client?.end(new Error('restart'));
+        }
         return await this.connectToWhatsapp({ instanceName });
       }
 

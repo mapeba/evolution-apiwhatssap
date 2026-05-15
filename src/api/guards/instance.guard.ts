@@ -10,13 +10,15 @@ async function getInstance(instanceName: string) {
 
     const exists = !!waMonitor.waInstances[instanceName];
 
+    if (exists) return true;
+
     if (cacheConf.REDIS.ENABLED && cacheConf.REDIS.SAVE_INSTANCES) {
       const keyExists = await cache.has(instanceName);
-
-      return exists || keyExists;
+      if (keyExists) return true;
     }
 
-    return exists || (await prismaRepository.instance.findMany({ where: { name: instanceName } })).length > 0;
+    // Always fall back to DB as the source of truth
+    return (await prismaRepository.instance.findMany({ where: { name: instanceName } })).length > 0;
   } catch (error) {
     throw new InternalServerErrorException(error?.toString());
   }
