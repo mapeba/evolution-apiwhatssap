@@ -522,6 +522,71 @@ export class BaileysStartupService extends ChannelStartupService {
       const errorPayload = (lastDisconnect?.error as Boom)?.output?.payload;
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
 
+      // badSession (500) means corrupted/out-of-sync Signal session keys (e.g. "Bad MAC").
+      // Reconnecting will not fix this — we must clear credentials and request a new QR.
+      if (statusCode === DisconnectReason.badSession) {
+        this.logger.warn({
+          message:
+            'Bad session detected (corrupted Signal keys / Bad MAC). Clearing credentials and requesting re-authentication.',
+          instanceName: this.instance.name,
+        });
+
+        this.endSession = true;
+
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+
+        try {
+          this.client?.ws?.close();
+          this.client?.end(new Error('Bad session - clearing credentials'));
+        } catch (error) {
+          this.logger.error({ message: 'Error closing socket after bad session', error });
+        }
+
+        // Clear stored credentials so a new QR can be generated
+        try {
+          const db = this.configService.get<Database>('DATABASE');
+          const cache = this.configService.get<CacheConf>('CACHE');
+          const provider = this.configService.get<ProviderSession>('PROVIDER');
+
+          if (provider?.ENABLED) {
+            const authState = await this.authStateProvider.authStateProvider(this.instance.id);
+            await authState.removeCreds();
+          }
+          if (cache?.REDIS.ENABLED && cache?.REDIS.SAVE_INSTANCES) {
+            const authState = await useMultiFileAuthStateRedisDb(this.instance.id, this.cache);
+            await authState.removeCreds();
+          }
+          if (db.SAVE_DATA.INSTANCE) {
+            const authState = await useMultiFileAuthStatePrisma(this.instance.id, this.cache);
+            await authState.removeCreds();
+          }
+        } catch (error) {
+          this.logger.error({ message: 'Error clearing credentials after bad session', error });
+        }
+
+        await this.prismaRepository.instance.update({
+          where: { id: this.instanceId },
+          data: {
+            connectionStatus: 'close',
+            disconnectionAt: new Date(),
+            disconnectionReasonCode: statusCode,
+            disconnectionObject: JSON.stringify(lastDisconnect),
+          },
+        });
+
+        this.sendDataWebhook(Events.CONNECTION_UPDATE, {
+          instance: this.instance.name,
+          state: 'close',
+          statusReason: statusCode,
+        });
+
+        this.eventEmitter.emit('logout.instance', this.instance.name, 'inner');
+        return;
+      }
+
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
 
       this.logger.info({
