@@ -304,15 +304,17 @@ export class BaileysStartupService extends ChannelStartupService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.endSession = false;
+    // Set endSession=true so the close event fired by client.end() does NOT schedule
+    // another reconnect. createClient() will reset it to false (since isDeleting=false).
+    this.endSession = true;
     this.isDeleting = false;
     this.reconnectAttempts = 0;
 
     try {
       this.client?.ws?.close();
       this.client?.end(new Error('Force restart'));
-    } catch {
-      // Ignore errors during force-close
+    } catch (error) {
+      this.logger.error({ message: 'Error closing socket during cancelReconnect', error });
     }
   }
 
@@ -937,6 +939,17 @@ export class BaileysStartupService extends ChannelStartupService {
         return message;
       },
     };
+
+    // Close previous client cleanly before creating a new one to avoid
+    // accumulating parallel Baileys instances with active event handlers.
+    if (this.client) {
+      try {
+        this.client.ws?.close();
+        this.client.end(new Error('Replaced by new connection'));
+      } catch (error) {
+        this.logger.error({ message: 'Error closing previous client before reconnect', error });
+      }
+    }
 
     // Only reset endSession if not being deleted
     if (!this.isDeleting) {
