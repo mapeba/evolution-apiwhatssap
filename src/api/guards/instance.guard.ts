@@ -28,7 +28,8 @@ export async function instanceExistsGuard(req: Request, _: Response, next: NextF
   if (
     req.originalUrl.includes('/instance/create') ||
     req.originalUrl.includes('/instance/fetchInstances') ||
-    req.originalUrl.includes('/instance/delete')
+    req.originalUrl.includes('/instance/delete') ||
+    req.originalUrl.includes('/instance/logout')
   ) {
     return next();
   }
