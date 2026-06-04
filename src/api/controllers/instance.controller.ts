@@ -479,6 +479,13 @@ export class InstanceController {
         this.logger.error(error);
       }
 
+      if (!waInstances) {
+        // La instancia no está en memoria — forzar eliminación directa desde la BD
+        await this.prismaRepository.instance.deleteMany({ where: { name: instanceName } });
+        this.logger.warn(`Force-deleted instance "${instanceName}" from database (not in memory).`);
+        return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted (forced)' } };
+      }
+
       this.eventEmitter.emit('remove.instance', instanceName, 'inner');
       return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted' } };
     } catch (error) {
