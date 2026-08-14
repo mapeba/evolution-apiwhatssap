@@ -7,9 +7,14 @@ import { CacheService } from '@api/services/cache.service';
 import { WAMonitoringService } from '@api/services/monitor.service';
 import { SettingsService } from '@api/services/settings.service';
 import { Events, Integration, wa } from '@api/types/wa.types';
-import { Auth, Chatwoot, ConfigService, HttpServer, WaBusiness } from '@config/env.config';
+import { Auth, CacheConf, Chatwoot, ConfigService, HttpServer, WaBusiness } from '@config/env.config';
 import { Logger } from '@config/logger.config';
-import { BadRequestException, InternalServerErrorException, UnauthorizedException } from '@exceptions';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@exceptions';
 import { delay } from 'baileys';
 import { isArray, isURL } from 'class-validator';
 import EventEmitter2 from 'eventemitter2';
@@ -445,6 +450,23 @@ export class InstanceController {
   }
 
   public async logout({ instanceName }: InstanceDto) {
+    const waInstance = this.waMonitor.waInstances[instanceName];
+
+    if (!waInstance) {
+      // La instancia no está en memoria — forzar logout limpiando sesión en BD/cache
+      if (!(await this.instanceExistsAnywhere(instanceName))) {
+        throw new NotFoundException(`The "${instanceName}" instance does not exist`);
+      }
+
+      try {
+        await this.waMonitor.cleaningUp(instanceName);
+        this.logger.warn(`Force-logged out instance "${instanceName}" (not in memory).`);
+        return { status: 'SUCCESS', error: false, response: { message: 'Instance logged out (forced)' } };
+      } catch (error) {
+        throw new InternalServerErrorException(error.toString());
+      }
+    }
+
     const { instance } = await this.connectionState({ instanceName });
 
     if (instance.state === 'close') {
@@ -452,7 +474,7 @@ export class InstanceController {
     }
 
     try {
-      await this.waMonitor.waInstances[instanceName]?.logoutInstance();
+      await waInstance.logoutInstance();
 
       return { status: 'SUCCESS', error: false, response: { message: 'Instance logged out' } };
     } catch (error) {
@@ -462,16 +484,34 @@ export class InstanceController {
 
   public async deleteInstance({ instanceName }: InstanceDto) {
     const { instance } = await this.connectionState({ instanceName });
+    const waInstances = this.waMonitor.waInstances[instanceName];
+
+    if (!waInstances) {
+      // La instancia no está en memoria — forzar eliminación directa desde la BD
+      if (!(await this.instanceExistsAnywhere(instanceName))) {
+        throw new NotFoundException(`The "${instanceName}" instance does not exist`);
+      }
+
+      try {
+        // cleaningUp limpia credenciales (Session), claves Redis, provider y directorio local
+        await this.waMonitor.cleaningUp(instanceName);
+        await this.prismaRepository.instance.deleteMany({ where: { name: instanceName } });
+        this.logger.warn(`Force-deleted instance "${instanceName}" from database (not in memory).`);
+        return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted (forced)' } };
+      } catch (error) {
+        throw new BadRequestException(error.toString());
+      }
+    }
+
     try {
-      const waInstances = this.waMonitor.waInstances[instanceName];
-      if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) waInstances?.clearCacheChatwoot();
+      if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) waInstances.clearCacheChatwoot();
 
       if (instance.state === 'connecting' || instance.state === 'open') {
         await this.logout({ instanceName });
       }
 
       try {
-        waInstances?.sendDataWebhook(Events.INSTANCE_DELETE, {
+        waInstances.sendDataWebhook(Events.INSTANCE_DELETE, {
           instanceName,
           instanceId: waInstances.instanceId,
         });
@@ -479,17 +519,22 @@ export class InstanceController {
         this.logger.error(error);
       }
 
-      if (!waInstances) {
-        // La instancia no está en memoria — forzar eliminación directa desde la BD
-        await this.prismaRepository.instance.deleteMany({ where: { name: instanceName } });
-        this.logger.warn(`Force-deleted instance "${instanceName}" from database (not in memory).`);
-        return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted (forced)' } };
-      }
-
       this.eventEmitter.emit('remove.instance', instanceName, 'inner');
       return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted' } };
     } catch (error) {
       throw new BadRequestException(error.toString());
     }
+  }
+
+  private async instanceExistsAnywhere(instanceName: string): Promise<boolean> {
+    const dbInstance = await this.prismaRepository.instance.findFirst({ where: { name: instanceName } });
+    if (dbInstance) return true;
+
+    const cacheConf = this.configService.get<CacheConf>('CACHE');
+    if (cacheConf?.REDIS?.ENABLED && cacheConf?.REDIS?.SAVE_INSTANCES) {
+      return await this.cache.has(instanceName);
+    }
+
+    return false;
   }
 }
