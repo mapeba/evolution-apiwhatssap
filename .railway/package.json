@@ -1,0 +1,13 @@
+{
+  "name": "evolution-apiwhatssap-railway-iac",
+  "private": true,
+  "description": "SDK de Railway (version exacta) para evaluar railway.ts con `railway config plan|apply`",
+  "type": "module",
+  "scripts": {
+    "tipos": "tsc -p ."
+  },
+  "devDependencies": {
+    "railway": "3.12.0",
+    "typescript": "5.9.3"
+  }
+}

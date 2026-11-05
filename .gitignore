@@ -46,3 +46,6 @@ lerna-debug.log*
 .tool-versions
 
 /prisma/migrations/*
+
+# SDK de Railway (se instala con `npm --prefix .railway ci`)
+.railway/node_modules
