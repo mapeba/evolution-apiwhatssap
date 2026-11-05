@@ -256,6 +256,11 @@ export class BaileysStartupService extends ChannelStartupService {
   private eventProcessingQueue: Promise<void> = Promise.resolve();
   private reconnectAttempts = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 10;
+  // Cierres seguidos con código 500 sin llegar a 'open'. Un 500 suelto (p. ej. WhatsApp responde «internal server
+  // error» al confirmar una foto: tag ack, class status, type media) NO es una sesión dañada: se reconecta. Solo con
+  // señales de sesión dañada (Bad MAC…) o tras varios 500 seguidos sin conectar se borran las credenciales.
+  private badSessionStreak = 0;
+  private readonly MAX_BAD_SESSION_STREAK = 3;
 
   // Cumulative history sync counters (reset on new sync or completion)
   private historySyncMessageCount = 0;
@@ -535,9 +540,26 @@ export class BaileysStartupService extends ChannelStartupService {
       const errorPayload = (lastDisconnect?.error as Boom)?.output?.payload;
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
 
-      // badSession (500) means corrupted/out-of-sync Signal session keys (e.g. "Bad MAC").
-      // Reconnecting will not fix this — we must clear credentials and request a new QR.
-      if (statusCode === DisconnectReason.badSession) {
+      // badSession (500) MAY mean corrupted/out-of-sync Signal session keys (e.g. "Bad MAC"), and then reconnecting will
+      // not fix it — credentials must be cleared and a new QR requested. But Boom also uses 500 for ANY error without
+      // its own code: a transient «An internal server error occurred» from WhatsApp on an ack (tag ack, class status,
+      // type media) closed and logged out CONSIGNACIONES YAMAHA, ecotech1new, LALOCURA2 and jorge between 2 and 4 Nov
+      // 2026, all with valid sessions. So: clear only with real bad-session signs, or after several 500s in a row
+      // without reaching 'open'; otherwise fall through to the normal reconnection.
+      const textoError = `${errorMessage} ${JSON.stringify(errorPayload || '')} ${(lastDisconnect?.error as Error)?.stack || ''}`;
+      const senalesSesionDanada = /bad ?mac|bad ?session|no (matching )?sessions?|invalid prekey|failed to decrypt|session.*(corrupt|invalid)/i.test(textoError);
+      if (statusCode === DisconnectReason.badSession) this.badSessionStreak++;
+      const sesionDanada =
+        statusCode === DisconnectReason.badSession && (senalesSesionDanada || this.badSessionStreak >= this.MAX_BAD_SESSION_STREAK);
+      if (statusCode === DisconnectReason.badSession && !sesionDanada) {
+        this.logger.warn({
+          message: 'Status 500 without bad-session signs: reconnecting instead of clearing credentials',
+          instanceName: this.instance.name,
+          streak: this.badSessionStreak,
+          errorMessage,
+        });
+      }
+      if (sesionDanada) {
         this.logger.warn({
           message:
             'Bad session detected (corrupted Signal keys / Bad MAC). Clearing credentials and requesting re-authentication.',
@@ -708,8 +730,9 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     if (connection === 'open') {
-      // Reset reconnection counter on successful connection
+      // Reset reconnection counters on successful connection
       this.reconnectAttempts = 0;
+      this.badSessionStreak = 0;
 
       this.instance.wuid = this.client.user.id.replace(/:\d+/, '');
       try {
