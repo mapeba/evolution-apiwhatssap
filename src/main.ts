@@ -30,6 +30,43 @@ async function initWA() {
   await waMonitor.loadInstance();
 }
 
+/**
+ * Closes every WhatsApp socket before the process exits.
+ *
+ * Without this the container was SIGKILLed with its sockets still open, so during a redeploy the
+ * old and the new container held WhatsApp connections for the same credentials at once. WhatsApp
+ * only allows one, and the resulting fight either kicked the instance off or desynced the Signal
+ * keys badly enough to force a new QR scan.
+ *
+ * Two things this must NOT do, or restarting would be worse than crashing:
+ *  - no logout(): that revokes the device and would require re-scanning the QR. We only close the
+ *    socket; the credentials stay valid and the new container reuses them.
+ *  - no writing connectionStatus='close': loadInstance() only auto-reconnects instances stored as
+ *    'open'/'connecting', so marking them closed here would leave them down after the restart.
+ *    Setting endSession makes the close handler return before it touches the database.
+ */
+async function shutdownGracefully(logger: Logger, signal: string) {
+  logger.warn(`${signal} received - closing WhatsApp sockets before exit`);
+
+  const names = Object.keys(waMonitor.waInstances ?? {});
+  await Promise.all(
+    names.map(async (name) => {
+      const instance = waMonitor.waInstances[name];
+      try {
+        // cancelReconnect() is Baileys-only: it clears the pending reconnect timer, detaches the
+        // ev.process() listener and closes the socket. Other channels hold no socket to close.
+        if (typeof instance?.cancelReconnect === 'function') {
+          instance.cancelReconnect();
+        }
+      } catch (error) {
+        logger.error(`Error closing socket for "${name}" during shutdown: ${error}`);
+      }
+    }),
+  );
+
+  logger.warn(`Closed ${names.length} instance socket(s) - exiting`);
+}
+
 async function bootstrap() {
   const logger = new Logger('SERVER');
   const app = express();
@@ -162,6 +199,24 @@ async function bootstrap() {
   initWA().catch((error) => {
     logger.error('Error loading instances: ' + error);
   });
+
+  let shuttingDown = false;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      // The platform sends SIGTERM once, then SIGKILL after the draining window; ignore repeats so
+      // a second signal cannot restart the teardown midway.
+      if (shuttingDown) return;
+      shuttingDown = true;
+
+      shutdownGracefully(logger, signal)
+        .catch((error) => logger.error('Error during graceful shutdown: ' + error))
+        .finally(() => {
+          server.close(() => process.exit(0));
+          // Do not wait on lingering keep-alive connections past the draining window.
+          setTimeout(() => process.exit(0), 5000).unref();
+        });
+    });
+  }
 
   onUnexpectedError();
 }

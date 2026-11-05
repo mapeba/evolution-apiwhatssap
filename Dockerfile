@@ -60,4 +60,9 @@ ENV DOCKER_ENV=true
 
 EXPOSE 8080
 
-ENTRYPOINT ["/bin/bash", "-c", ". ./Docker/scripts/deploy_database.sh && npm run start:prod" ]
+# `exec node` instead of `npm run start:prod`, so that node replaces bash as PID 1 and actually
+# receives SIGTERM. Previously bash stayed PID 1 running a compound command (it only execs when the
+# command is the last and only one), never forwarded the signal, and npm added a second process in
+# between — so node was always SIGKILLed with its WhatsApp sockets still open. Keep this in sync
+# with the "start:prod" script in package.json.
+ENTRYPOINT ["/bin/bash", "-c", ". ./Docker/scripts/deploy_database.sh && exec node --network-family-autoselection-attempt-timeout=1000 dist/main" ]

@@ -414,23 +414,41 @@ export class WAMonitoringService {
     );
   }
 
+  /**
+   * Fully removes an instance: webhook notice, cache/session cleanup, database rows and the
+   * in-memory reference. Rejects if the removal did not go through, so callers that await it can
+   * report the real outcome instead of assuming success.
+   */
+  public async removeInstanceCompletely(instanceName: string) {
+    try {
+      await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
+    } catch (error) {
+      // A failing webhook must not keep the instance alive.
+      this.logger.error({ message: `Error sending remove webhook for "${instanceName}"`, error });
+    }
+
+    this.clearDelInstanceTime(instanceName);
+
+    // Sequential, not concurrent: cleaningStoreData() ends by deleting the instance row that
+    // cleaningUp() updates. Fired off unawaited they raced, and when the delete landed first the
+    // update rejected with P2025 — swallowed by the global unhandledRejection logger, leaving the
+    // removal half-done with nobody the wiser.
+    await this.cleaningUp(instanceName);
+    await this.cleaningStoreData(instanceName);
+
+    delete this.waInstances[instanceName];
+    this.logger.warn(`Instance "${instanceName}" - REMOVED`);
+  }
+
   private removeInstance() {
     this.eventEmitter.on('remove.instance', async (instanceName: string) => {
+      // Listener boundary: this promise has no caller, so a rejection here only reaches the global
+      // unhandledRejection logger and is lost. Callers that need the outcome should await
+      // removeInstanceCompletely() directly.
       try {
-        await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
-
-        this.clearDelInstanceTime(instanceName);
-
-        this.cleaningUp(instanceName);
-        this.cleaningStoreData(instanceName);
-      } finally {
-        this.logger.warn(`Instance "${instanceName}" - REMOVED`);
-      }
-
-      try {
-        delete this.waInstances[instanceName];
+        await this.removeInstanceCompletely(instanceName);
       } catch (error) {
-        this.logger.error(error);
+        this.logger.error({ message: `Failed to remove instance "${instanceName}"`, error });
       }
     });
     this.eventEmitter.on('logout.instance', async (instanceName: string) => {

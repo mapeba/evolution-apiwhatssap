@@ -461,13 +461,23 @@ export class InstanceController {
   }
 
   public async deleteInstance({ instanceName }: InstanceDto) {
-    const { instance } = await this.connectionState({ instanceName });
     try {
       const waInstances = this.waMonitor.waInstances[instanceName];
       if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) waInstances?.clearCacheChatwoot();
 
-      if (instance.state === 'connecting' || instance.state === 'open') {
-        await this.logout({ instanceName });
+      // Tear the session down unconditionally instead of gating on the state we just read.
+      // An unpaired instance flaps between 'connecting' and 'close' every few seconds while it
+      // cycles QR codes, so a state check here is never trustworthy: reading 'connecting' sent us
+      // into logout(), which re-read 'close' and threw "is not connected"; reading 'close' skipped
+      // the teardown entirely and left the reconnect timer armed to resurrect the instance right
+      // after its rows were deleted. logoutInstance() is safe in any state and is what clears
+      // isDeleting/endSession and cancels that timer.
+      if (waInstances) {
+        try {
+          await waInstances.logoutInstance();
+        } catch (error) {
+          this.logger.error({ message: `Error tearing down instance "${instanceName}" during delete`, error });
+        }
       }
 
       try {
@@ -486,7 +496,16 @@ export class InstanceController {
         return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted (forced)' } };
       }
 
-      this.eventEmitter.emit('remove.instance', instanceName, 'inner');
+      // Awaited rather than emitted: 'remove.instance' is fire-and-forget, so the old code
+      // answered SUCCESS while the deletion was still in flight and swallowed any failure —
+      // the instance stayed in the database and came back on the next restart.
+      await this.waMonitor.removeInstanceCompletely(instanceName);
+
+      const stillThere = await this.prismaRepository.instance.findFirst({ where: { name: instanceName } });
+      if (stillThere) {
+        throw new Error(`Instance "${instanceName}" is still present in the database after removal`);
+      }
+
       return { status: 'SUCCESS', error: false, response: { message: 'Instance deleted' } };
     } catch (error) {
       throw new BadRequestException(error.toString());
