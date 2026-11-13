@@ -1,0 +1,84 @@
+diff --git a/node_modules/baileys/lib/Socket/messages-recv.js b/node_modules/baileys/lib/Socket/messages-recv.js
+index f2e2e10..c24a76d 100644
+--- a/node_modules/baileys/lib/Socket/messages-recv.js
++++ b/node_modules/baileys/lib/Socket/messages-recv.js
+@@ -1166,12 +1166,19 @@ export const makeMessagesRecvSocket = (config) => {
+             return exec(node, false).catch(err => onUnexpectedError(err, identifier));
+         }
+     };
++    // WhatsApp manda las historias de los contactos como <status> de primer nivel. rc.9 no las
++    // confirmaba: el servidor retenía los demás mensajes y cortaba a los ~50 min con
++    // «Stream Errored (ack)» class=status (Baileys #2858, PR #2883). Basta con confirmarlas.
++    const handleStatus = async (node) => {
++        await sendMessageAck(node);
++    };
+     const makeOfflineNodeProcessor = () => {
+         const nodeProcessorMap = new Map([
+             ['message', handleMessage],
+             ['call', handleCall],
+             ['receipt', handleReceipt],
+-            ['notification', handleNotification]
++            ['notification', handleNotification],
++            ['status', handleStatus]
+         ]);
+         const nodes = [];
+         let isProcessing = false;
+@@ -1182,16 +1189,27 @@ export const makeMessagesRecvSocket = (config) => {
+             }
+             isProcessing = true;
+             const promise = async () => {
+-                while (nodes.length && ws.isOpen) {
+-                    const { type, node } = nodes.shift();
+-                    const nodeProcessor = nodeProcessorMap.get(type);
+-                    if (!nodeProcessor) {
+-                        onUnexpectedError(new Error(`unknown offline node type: ${type}`), 'processing offline node');
+-                        continue;
++                try {
++                    while (nodes.length && ws.isOpen) {
++                        const { type, node } = nodes.shift();
++                        const nodeProcessor = nodeProcessorMap.get(type);
++                        if (!nodeProcessor) {
++                            onUnexpectedError(new Error(`unknown offline node type: ${type}`), 'processing offline node');
++                            continue;
++                        }
++                        // Sin esto, un solo nodo que falla dejaba isProcessing en true y el resto de la
++                        // cola sin procesar hasta la siguiente reconexión.
++                        try {
++                            await nodeProcessor(node);
++                        }
++                        catch (error) {
++                            onUnexpectedError(error, `processing offline ${type}`);
++                        }
+                     }
+-                    await nodeProcessor(node);
+                 }
+-                isProcessing = false;
++                finally {
++                    isProcessing = false;
++                }
+             };
+             promise().catch(error => onUnexpectedError(error, 'processing offline nodes'));
+         };
+@@ -1220,6 +1238,9 @@ export const makeMessagesRecvSocket = (config) => {
+     ws.on('CB:notification', async (node) => {
+         await processNode('notification', node, 'handling notification', handleNotification);
+     });
++    ws.on('CB:status', async (node) => {
++        await processNode('status', node, 'acking status stanza', handleStatus);
++    });
+     ws.on('CB:ack,class:message', (node) => {
+         handleBadAck(node).catch(error => onUnexpectedError(error, 'handling bad ack'));
+     });
+diff --git a/node_modules/baileys/lib/Utils/messages.js b/node_modules/baileys/lib/Utils/messages.js
+index eff7a53..b3f7b63 100644
+--- a/node_modules/baileys/lib/Utils/messages.js
++++ b/node_modules/baileys/lib/Utils/messages.js
+@@ -132,7 +132,7 @@ export const prepareWAMessageMedia = async (message, options) => {
+     }
+     const requiresDurationComputation = mediaType === 'audio' && typeof uploadData.seconds === 'undefined';
+     const requiresThumbnailComputation = (mediaType === 'image' || mediaType === 'video') && typeof uploadData['jpegThumbnail'] === 'undefined';
+-    const requiresWaveformProcessing = mediaType === 'audio' && uploadData.ptt === true;
++    const requiresWaveformProcessing = mediaType === 'audio' && uploadData.ptt === true && typeof uploadData.waveform === 'undefined';
+     const requiresAudioBackground = options.backgroundColor && mediaType === 'audio' && uploadData.ptt === true;
+     const requiresOriginalForSomeProcessing = requiresDurationComputation || requiresThumbnailComputation;
+     const { mediaKey, encFilePath, originalFilePath, fileEncSha256, fileSha256, fileLength } = await encryptedStream(uploadData.media, options.mediaTypeOverride || mediaType, {
